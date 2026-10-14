@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>實踐大學 數遊系 116學年 互動學分規劃與共編系統</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts: Inter & Noto Sans TC -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- React 18 & Babel Standalone -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Supabase JS Client CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans TC', sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+
+    .curriculum-table th, .curriculum-table td {
+      border-color: #e2e8f0;
+    }
+    .curriculum-table tr:hover td {
+      background-color: rgba(241, 245, 249, 0.7);
+    }
+
+    .drag-over-cell {
+      background-color: rgba(99, 102, 241, 0.08) !important;
+      border: 2px dashed #6366f1 !important;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-slate-50 text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
+
+  <div id="root" class="flex flex-col flex-1"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // 請替換為您的 Supabase 專案 URL 與 Key
+    const SUPABASE_CONFIG = {
+      url: "YOUR_SUPABASE_URL",
+      anonKey: "YOUR_SUPABASE_ANON_KEY"
+    };
+
+    const CATEGORIES = ['校必', '院必', '系必', '系選', '自由選修'];
+
+    const CATEGORY_COLORS = {
+      '校必': { bg: 'bg-indigo-50/90 border-indigo-200 text-indigo-950 shadow-sm hover:shadow', badge: 'bg-indigo-100 text-indigo-800 border-indigo-200/80 font-semibold', hover: 'hover:border-indigo-400' },
+      '院必': { bg: 'bg-purple-50/90 border-purple-200 text-purple-950 shadow-sm hover:shadow', badge: 'bg-purple-100 text-purple-800 border-purple-200/80 font-semibold', hover: 'hover:border-purple-400' },
+      '系必': { bg: 'bg-emerald-50/90 border-emerald-200 text-emerald-950 shadow-sm hover:shadow', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200/80 font-semibold', hover: 'hover:border-emerald-400' },
+      '系選': { bg: 'bg-amber-50/90 border-amber-200 text-amber-950 shadow-sm hover:shadow', badge: 'bg-amber-100 text-amber-800 border-amber-200/80 font-semibold', hover: 'hover:border-amber-400' },
+      '自由選修': { bg: 'bg-sky-50/90 border-sky-200 text-sky-950 shadow-sm hover:shadow', badge: 'bg-sky-100 text-sky-800 border-sky-200/80 font-semibold', hover: 'hover:border-sky-400' },
+    };
+
+    const GRADUATION_REQUIREMENTS = {
+      total: 128,
+      校必: 18,
+      院必: 8,
+      系必: 51,
+      選修: 41
+    };
+
+    const ACADEMIC_YEARS = [
+      { year: '116學年 (大一)', s1: 'y1_s1', s2: 'y1_s2' },
+      { year: '117學年 (大二)', s1: 'y2_s1', s2: 'y2_s2' },
+      { year: '118學年 (大三)', s1: 'y3_s1', s2: 'y3_s2' },
+      { year: '119學年 (大四)', s1: 'y4_s1', s2: 'y4_s2' }
+    ];
+
+    const SEMESTERS = [
+      { id: 'y1_s1', year: '116', sem: '上', label: '116大一 上' },
+      { id: 'y1_s2', year: '116', sem: '下', label: '116大一 下' },
+      { id: 'y2_s1', year: '117', sem: '上', label: '117大二 上' },
+      { id: 'y2_s2', year: '117', sem: '下', label: '117大二 下' },
+      { id: 'y3_s1', year: '118', sem: '上', label: '118大三 上' },
+      { id: 'y3_s2', year: '118', sem: '下', label: '118大三 下' },
+      { id: 'y4_s1', year: '119', sem: '上', label: '119大四 上' },
+      { id: 'y4_s2', year: '119', sem: '下', label: '119大四 下' }
+    ];
+
+    const INITIAL_COURSES = [
+      // 校必
+      { id: 'c_c1', name: '體育興趣選項', code: 'A1990', credits: 2, category: '校必', semester: 'y1_s1' },
+      { id: 'c_c2', name: '國文(1)', code: 'CH1101', credits: 2, category: '校必', semester: 'y1_s1' },
+      { id: 'c_c3', name: '大學英文(1)', code: 'E2001', credits: 2, category: '校必', semester: 'y1_s1' },
+      { id: 'c_c4', name: '體育興趣選項', code: 'A1990', credits: 2, category: '校必', semester: 'y1_s2' },
+      { id: 'c_c5', name: '國文(2)', code: 'CH1102', credits: 2, category: '校必', semester: 'y1_s2' },
+      { id: 'c_c6', name: '大學英文(2)', code: 'E2002', credits: 2, category: '校必', semester: 'y1_s2' },
+      { id: 'c_c7', name: '家庭科學', code: 'GENS120', credits: 1, category: '校必', semester: 'y2_s1' },
+      { id: 'c_c8', name: '大學英文(3)', code: 'LANG209', credits: 2, category: '校必', semester: 'y2_s1' },
+      { id: 'c_c9', name: '大學英文(4)', code: 'LANG301', credits: 2, category: '校必', semester: 'y2_s2' },
+      { id: 'c_c10', name: '生活藝術', code: 'GENS119', credits: 1, category: '校必', semester: 'y3_s1' },
+      { id: 'c_c11', name: '英外語文畢業能力指標', code: 'LANG400', credits: 0, category: '校必', semester: 'y4_s1' },
+
+      // 院必
+      { id: 'c_c12', name: '創意思考', code: 'CSD147', credits: 2, category: '院必', semester: 'y1_s2' },
+      { id: 'c_c13', name: '專題(一)', code: 'CSD347', credits: 2, category: '院必', semester: 'y3_s1' },
+      { id: 'c_c14', name: '企業倫理', code: 'CSD406', credits: 2, category: '院必', semester: 'y3_s1' },
+      { id: 'c_c15', name: '專題(二)', code: 'CSD348', credits: 2, category: '院必', semester: 'y3_s2' },
+
+      // 系必
+      { id: 'c_m1', name: '程式設計實務', code: 'CSD152', credits: 2, category: '系必', semester: 'y1_s1' },
+      { id: 'c_m2', name: '數位多媒體設計', code: 'CSD160', credits: 3, category: '系必', semester: 'y1_s1' },
+      { id: 'c_m3', name: '3D建模(一)', code: 'CSD163', credits: 3, category: '系必', semester: 'y1_s1' },
+      { id: 'c_m4', name: '電腦繪圖', code: 'CSD108', credits: 3, category: '系必', semester: 'y1_s2' },
+      { id: 'c_m5', name: '互動遊戲設計(一)', code: 'CSD156', credits: 3, category: '系必', semester: 'y1_s2' },
+      { id: 'c_m6', name: '3D遊戲動畫設計', code: 'CSD171', credits: 3, category: '系必', semester: 'y1_s2' },
+      { id: 'c_m7', name: '3D建模(二)', code: 'CSD252', credits: 3, category: '系必', semester: 'y1_s2' },
+      { id: 'c_m8', name: '色彩學', code: 'CSD209', credits: 3, category: '系必', semester: 'y2_s1' },
+      { id: 'c_m9', name: '設計(二)', code: 'CSD241', credits: 3, category: '系必', semester: 'y2_s2' },
+      { id: 'c_m10', name: '角色創作和動態', code: 'CSD259', credits: 2, category: '系必', semester: 'y2_s2' },
+      { id: 'c_m11', name: '3D角色骨架與動作', code: 'CSD248', credits: 3, category: '系必', semester: 'y2_s2' },
+      { id: 'c_m12', name: '角色模型雕刻(一)', code: 'CSD253', credits: 3, category: '系必', semester: 'y2_s2' },
+      { id: 'c_m13', name: '3D遊戲設計(一)', code: 'CSD310', credits: 3, category: '系必', semester: 'y2_s2' },
+      { id: 'c_m14', name: '角色服裝設計', code: 'CSD364', credits: 3, category: '系必', semester: 'y3_s1' },
+      { id: 'c_m15', name: '短影音製作(一)', code: 'DMG377', credits: 3, category: '系必', semester: 'y3_s1' },
+      { id: 'c_m16', name: '專題(三)', code: 'CSD401', credits: 2, category: '系必', semester: 'y4_s1' },
+      { id: 'c_m17', name: '數位媒體行銷', code: 'CSD450', credits: 3, category: '系必', semester: 'y4_s1' },
+      { id: 'c_m18', name: '作品集與展演', code: 'CSD403', credits: 3, category: '系必', semester: 'y4_s1' },
+
+      // 系選
+      { id: 'c_e1', name: '素描', code: 'CSD117', credits: 3, category: '系選', semester: 'y1_s1' },
+      { id: 'c_e2', name: '平面圖形設計', code: 'CSD119', credits: 3, category: '系選', semester: 'y1_s1' },
+      { id: 'c_e3', name: '遊戲產業趨勢業師講座', code: 'CSD366', credits: 2, category: '系選', semester: 'y1_s2' },
+      { id: 'c_e4', name: '動態網頁設計', code: 'DMG262', credits: 3, category: '系選', semester: 'y1_s2' },
+      { id: 'c_e5', name: '遊戲程式設計', code: 'CSD162', credits: 2, category: '系選', semester: 'y1_s2' },
+      { id: 'c_e6', name: '虛擬角色直播', code: 'CSD172', credits: 3, category: '系選', semester: 'y1_s2' },
+      { id: 'c_e7', name: '材質貼圖繪製', code: 'CSD232', credits: 3, category: '系選', semester: 'y1_s2' },
+      { id: 'c_e8', name: '雕塑造形設計', code: 'CSD227', credits: 3, category: '系選', semester: 'y2_s1' },
+      { id: 'c_e9', name: 'UI/UX設計', code: 'CSD228', credits: 3, category: '系選', semester: 'y2_s1' },
+      { id: 'c_e10', name: '數位遊戲插畫', code: 'CSD243', credits: 3, category: '系選', semester: 'y2_s1' },
+      { id: 'c_e11', name: '編排設計', code: 'CSD251', credits: 3, category: '系選', semester: 'y2_s2' },
+      { id: 'c_e12', name: '分鏡與構圖', code: 'CSD254', credits: 3, category: '系選', semester: 'y2_s2' },
+      { id: 'c_e13', name: '進階3D遊戲動畫設計', code: 'CSD260', credits: 3, category: '系選', semester: 'y2_s2' },
+      { id: 'c_e14', name: '遊戲企劃設計', code: 'CSD225', credits: 3, category: '系選', semester: 'y2_s2' },
+      { id: 'c_e15', name: '人工智慧與創新設計', code: 'CSD244', credits: 2, category: '系選', semester: 'y2_s2' },
+      { id: 'c_e16', name: '3D遊戲設計(二)', code: 'CSD311', credits: 3, category: '系選', semester: 'y3_s1' },
+      { id: 'c_e17', name: '角色模型雕刻(二)', code: 'CSD367', credits: 3, category: '系選', semester: 'y3_s1' },
+      { id: 'c_e18', name: '2D遊戲動畫', code: 'CSD368', credits: 3, category: '系選', semester: 'y3_s1' },
+      { id: 'c_e19', name: '動態圖像設計', code: 'CSD360', credits: 3, category: '系選', semester: 'y3_s2' },
+      { id: 'c_e20', name: '2D遊戲製作實務', code: 'CSD365', credits: 3, category: '系選', semester: 'y3_s2' },
+      { id: 'c_e21', name: '數位虛擬場景整合實務', code: 'DMG375', credits: 3, category: '系選', semester: 'y3_s2' },
+      { id: 'c_e22', name: '專題研究與實習(一)', code: 'CSD307', credits: 3, category: '系選', semester: 'y4_s1' },
+      { id: 'c_e23', name: '遊戲產業實務實習', code: 'CSD443', credits: 3, category: '系選', semester: 'y4_s1' },
+      { id: 'c_e24', name: '專題研究與實習(二)', code: 'CSD422', credits: 3, category: '系選', semester: 'y4_s2' }
+    ];
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('planner');
+      const [viewMode, setViewMode] = useState('table');
+      const [userName, setUserName] = useState(() => '使用者_' + Math.floor(Math.random() * 899 + 100));
+      const [courses, setCourses] = useState(() => {
+        const saved = localStorage.getItem('dmd_116_courses');
+        return saved ? JSON.parse(saved) : INITIAL_COURSES;
+      });
+      const [history, setHistory] = useState([]);
+      const [showHistoryModal, setShowHistoryModal] = useState(false);
+      const [editCourse, setEditCourse] = useState(null);
+      const [draggedCourseId, setDraggedCourseId] = useState(null);
+      const [dragOverCell, setDragOverCell] = useState(null);
+      const [isCloudConnected, setIsCloudConnected] = useState(false);
+
+      const supabaseRef = useRef(null);
+
+      // Save Local Backup
+      useEffect(() => {
+        localStorage.setItem('dmd_116_courses', JSON.stringify(courses));
+      }, [courses]);
+
+      useEffect(() => {
+        if (!window.supabase || SUPABASE_CONFIG.url === "YOUR_SUPABASE_URL") return;
+
+        try {
+          const client = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+          supabaseRef.current = client;
+
+          // 讀取初始資料
+          const loadInitialData = async () => {
+            const { data } = await client
+              .from('curriculum')
+              .select('*')
+              .eq('id', 'dmd_116_plan')
+              .maybeSingle();
+
+            if (data) {
+              if (data.courses) setCourses(data.courses);
+              if (data.history) setHistory(data.history || []);
+              setIsCloudConnected(true);
+            }
+          };
+
+          loadInitialData();
+
+          // 訂閱 Supabase Realtime 推播
+          const channel = client
+            .channel('public:curriculum')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'curriculum' }, (payload) => {
+              if (payload.new) {
+                if (payload.new.courses) setCourses(payload.new.courses);
+                if (payload.new.history) setHistory(payload.new.history || []);
+                setIsCloudConnected(true);
+              }
+            })
+            .subscribe((status) => {
+              if (status === 'SUBSCRIBED') {
+                setIsCloudConnected(true);
+              }
+            });
+
+          return () => {
+            client.removeChannel(channel);
+          };
+        } catch (err) {
+          console.warn("Supabase connection error, fallback to local mode:", err);
+        }
+      }, []);
+
+      const syncToCloud = async (newCourses, newHistory) => {
+        if (supabaseRef.current) {
+          try {
+            await supabaseRef.current
+              .from('curriculum')
+              .upsert({
+                id: 'dmd_116_plan',
+                courses: newCourses,
+                history: newHistory,
+                last_updated_by: userName,
+                updated_at: new Date().toISOString()
+              });
+          } catch (err) {
+            console.error("Supabase sync failed:", err);
+          }
+        }
+      };
+
+      const stats = useMemo(() => {
+        const counts = { 校必: 0, 院必: 0, 系必: 0, 系選: 0, 自由選修: 0, totalElectives: 0, total: 0 };
+        const semesterTotals = {};
+        SEMESTERS.forEach(s => { semesterTotals[s.id] = 0; });
+
+        courses.forEach(c => {
+          const cr = Number(c.credits) || 0;
+          if (counts[c.category] !== undefined) {
+            counts[c.category] += cr;
+          }
+          if (c.semester && semesterTotals[c.semester] !== undefined) {
+            semesterTotals[c.semester] += cr;
+          }
+          counts.total += cr;
+        });
+
+        counts.totalElectives = counts.系選 + counts.自由選修;
+        return { counts, semesterTotals };
+      }, [courses]);
+
+      const addHistoryLog = (actionText, updatedCourses) => {
+        const timeStr = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+        const logItem = { user: userName, action: actionText, timestamp: timeStr };
+        const newHistory = [logItem, ...history].slice(0, 30);
+        setHistory(newHistory);
+        syncToCloud(updatedCourses, newHistory);
+      };
+
+      const handleDragStart = (e, courseId) => {
+        e.dataTransfer.setData('text/plain', courseId);
+        setDraggedCourseId(courseId);
+      };
+
+      const handleDragOverCell = (e, catKey, semId) => {
+        e.preventDefault();
+        setDragOverCell(`${catKey}_${semId}`);
+      };
+
+      const handleDropCell = (e, targetCat, targetSem) => {
+        e.preventDefault();
+        setDragOverCell(null);
+        const courseId = e.dataTransfer.getData('text/plain') || draggedCourseId;
+        if (!courseId) return;
+
+        handleMoveCourseMatrix(courseId, targetCat, targetSem);
+      };
+
+      const handleMoveCourseMatrix = (courseId, newCategory, newSemester) => {
+        const target = courses.find(c => c.id === courseId);
+        if (!target) return;
+
+        if (target.category === newCategory && target.semester === newSemester) return;
+
+        const newSemObj = SEMESTERS.find(s => s.id === newSemester);
+        const updated = courses.map(c => 
+          c.id === courseId ? { ...c, category: newCategory, semester: newSemester } : c
+        );
+
+        setCourses(updated);
+        addHistoryLog(`將《${target.name}》移至 ${newSemObj ? newSemObj.label : newSemester} (${newCategory})`, updated);
+      };
+
+      const handleSaveCourse = (savedCourse) => {
+        let updated;
+        let actionText = '';
+        const exists = courses.some(c => c.id === savedCourse.id);
+
+        if (exists) {
+          updated = courses.map(c => c.id === savedCourse.id ? savedCourse : c);
+          actionText = `編輯課程《${savedCourse.name}》`;
+        } else {
+          updated = [...courses, savedCourse];
+          actionText = `新增課程《${savedCourse.name}》(${savedCourse.credits}學分)`;
+        }
+
+        setCourses(updated);
+        setEditCourse(null);
+        addHistoryLog(actionText, updated);
+      };
+
+      const handleDeleteCourse = (courseId) => {
+        const target = courses.find(c => c.id === courseId);
+        if (!target) return;
+
+        const updated = courses.filter(c => c.id !== courseId);
+        setCourses(updated);
+        setEditCourse(null);
+        addHistoryLog(`刪除課程《${target.name}》`, updated);
+      };
+
+      const handleResetDefault = () => {
+        setCourses(INITIAL_COURSES);
+        addHistoryLog(`重設課表為預設 116學年 版`, INITIAL_COURSES);
+      };
+
+      return (
+        <div className="flex flex-col flex-1 min-h-screen">
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+            <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center space-x-6">
+                <div className="flex items-center space-x-2">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-indigo-200">
+                    <i className="fa-solid fa-cubes text-lg"></i>
+                  </div>
+                  <div>
+                    <h1 className="font-bold text-base text-slate-900 leading-tight">
+                      實踐數遊 116學年 課程計畫表
+                    </h1>
+                    <p className="text-[11px] text-slate-500 font-medium">互動學分規劃與共編系統</p>
+                  </div>
+                </div>
+
+                <nav className="flex bg-slate-100 p-1 rounded-xl text-xs font-medium border border-slate-200">
+                  <button 
+                    onClick={() => setActiveTab('planner')}
+                    className={`px-3 py-1.5 rounded-lg transition ${activeTab === 'planner' ? 'bg-white text-indigo-700 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900'}`}
+                  >
+                    <i className="fa-solid fa-table-cells mr-1.5"></i> 課表地圖
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('rules')}
+                    className={`px-3 py-1.5 rounded-lg transition ${activeTab === 'rules' ? 'bg-white text-indigo-700 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900'}`}
+                  >
+                    <i className="fa-solid fa-graduation-cap mr-1.5"></i> 畢業門檻
+                  </button>
+                </nav>
+
+                {activeTab === 'planner' && (
+                  <div className="hidden sm:flex bg-slate-100 p-1 rounded-xl text-xs font-medium border border-slate-200">
+                    <button 
+                      onClick={() => setViewMode('table')}
+                      className={`px-2.5 py-1 rounded-lg transition ${viewMode === 'table' ? 'bg-white text-slate-800 shadow-xs font-semibold' : 'text-slate-500 hover:text-slate-800'}`}
+                    >
+                      <i className="fa-solid fa-table mr-1"></i> 原表矩陣
+                    </button>
+                    <button 
+                      onClick={() => setViewMode('kanban')}
+                      className={`px-2.5 py-1 rounded-lg transition ${viewMode === 'kanban' ? 'bg-white text-slate-800 shadow-xs font-semibold' : 'text-slate-500 hover:text-slate-800'}`}
+                    >
+                      <i className="fa-solid fa-list-check mr-1"></i> 學期看板
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs" title={isCloudConnected ? "已連線至 Supabase 雲端資料庫" : "離線或未設定金鑰模式"}>
+                  <span className={`w-2 h-2 rounded-full mr-2 ${isCloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`}></span>
+                  <input 
+                    type="text" 
+                    value={userName} 
+                    onChange={(e) => setUserName(e.target.value)}
+                    className="bg-transparent border-none text-slate-800 font-semibold focus:outline-none w-24 text-xs"
+                  />
+                  <i className="fa-solid fa-pen text-[10px] text-slate-400 ml-1"></i>
+                </div>
+
+                <button 
+                  onClick={() => setShowHistoryModal(true)}
+                  className="bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl text-xs transition flex items-center gap-1.5 border border-slate-200 shadow-sm"
+                >
+                  <i className="fa-solid fa-clock-rotate-left text-indigo-600"></i>
+                  <span>歷程</span>
+                  {history.length > 0 && (
+                    <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                      {history.length}
+                    </span>
+                  )}
+                </button>
+
+                <button 
+                  onClick={() => setEditCourse({ id: 'c_' + Date.now(), name: '', code: 'CSD', credits: 3, category: '系選', semester: 'y1_s1' })}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3.5 py-1.5 rounded-xl text-xs transition shadow-sm hover:shadow flex items-center gap-1"
+                >
+                  <i className="fa-solid fa-plus"></i> 新增課程
+                </button>
+
+                <button 
+                  onClick={handleResetDefault}
+                  className="text-slate-400 hover:text-red-500 p-2 rounded-xl transition hover:bg-slate-100"
+                  title="重設為預設課表"
+                >
+                  <i className="fa-solid fa-rotate-right"></i>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="bg-white/80 border-b border-slate-200/80 px-4 py-3 shadow-sm">
+            <div className="max-w-7xl mx-auto">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+                <div className="col-span-2 md:col-span-2 bg-slate-50 p-3 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-slate-600 font-semibold">總學分加總 (畢業門檻 128)</span>
+                    <span className={`font-bold font-mono text-base ${stats.counts.total >= GRADUATION_REQUIREMENTS.total ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                      {stats.counts.total} / {GRADUATION_REQUIREMENTS.total} 學分
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${stats.counts.total >= 128 ? 'bg-emerald-500' : 'bg-gradient-to-r from-indigo-500 to-indigo-600'}`}
+                      style={{ width: `${Math.min(100, (stats.counts.total / 128) * 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-2xl border border-indigo-200 shadow-sm">
+                  <div className="text-indigo-900 font-semibold mb-1 flex justify-between">
+                    <span>校訂必修</span>
+                    <span className="font-mono text-indigo-600">{stats.counts.校必}/{GRADUATION_REQUIREMENTS.校必}</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (stats.counts.校必 / GRADUATION_REQUIREMENTS.校必) * 100)}%` }}></div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-2xl border border-purple-200 shadow-sm">
+                  <div className="text-purple-900 font-semibold mb-1 flex justify-between">
+                    <span>院訂必修</span>
+                    <span className="font-mono text-purple-600">{stats.counts.院必}/{GRADUATION_REQUIREMENTS.院必}</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="bg-purple-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (stats.counts.院必 / GRADUATION_REQUIREMENTS.院必) * 100)}%` }}></div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-2xl border border-emerald-200 shadow-sm">
+                  <div className="text-emerald-900 font-semibold mb-1 flex justify-between">
+                    <span>系訂必修</span>
+                    <span className="font-mono text-emerald-600">{stats.counts.系必}/{GRADUATION_REQUIREMENTS.系必}</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (stats.counts.系必 / GRADUATION_REQUIREMENTS.系必) * 100)}%` }}></div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-2xl border border-amber-200 shadow-sm">
+                  <div className="text-amber-900 font-semibold mb-1 flex justify-between">
+                    <span>專業選修</span>
+                    <span className="font-mono text-amber-600">{stats.counts.totalElectives}/{GRADUATION_REQUIREMENTS.選修}</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="bg-amber-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (stats.counts.totalElectives / GRADUATION_REQUIREMENTS.選修) * 100)}%` }}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <main className="flex-1 max-w-[98%] w-full mx-auto p-4 overflow-x-auto">
+            {activeTab === 'planner' && viewMode === 'table' && (
+              <div className="space-y-4">
+                <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between text-xs text-slate-700">
+                  <div className="flex items-center space-x-2">
+                    <i className="fa-solid fa-circle-info text-indigo-600 text-sm"></i>
+                    <span><strong>原計畫表模式：</strong>每一格代表「選別 × 學期」。按住課程即可跨類別、跨學期自由拖拽移動！</span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-sm">
+                  <table className="w-full text-xs text-slate-800 border-collapse curriculum-table min-w-[1100px]">
+                    <thead>
+                      <tr className="bg-slate-100/90 text-slate-800 border-b border-slate-200">
+                        <th rowSpan="2" className="p-3 border-r border-slate-200 w-28 text-center font-bold bg-slate-100">
+                          課程選別 / 學期
+                        </th>
+                        {ACADEMIC_YEARS.map(ay => (
+                          <th key={ay.year} colSpan="2" className="p-2 border-r border-slate-200 text-center font-bold bg-indigo-50/70 text-indigo-900 border-b">
+                            {ay.year}
+                          </th>
+                        ))}
+                        <th rowSpan="2" className="p-3 border-l border-slate-200 w-24 text-center font-bold bg-slate-100">
+                          選別小計
+                        </th>
+                      </tr>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                        {SEMESTERS.map(sem => (
+                          <th key={sem.id} className="p-2 border-r border-slate-200 text-center font-semibold w-[11%]">
+                            {sem.sem}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {CATEGORIES.map(catKey => {
+                        const style = CATEGORY_COLORS[catKey];
+                        const catCourses = courses.filter(c => c.category === catKey);
+                        const catCreditsSum = catCourses.reduce((acc, curr) => acc + (Number(curr.credits) || 0), 0);
+
+                        return (
+                          <tr key={catKey} className="border-b border-slate-200">
+                            <td className={`p-3 font-bold text-center border-r border-slate-200 bg-slate-50 ${style.badge}`}>
+                              {catKey}
+                            </td>
+
+                            {SEMESTERS.map(sem => {
+                              const cellCourses = courses.filter(c => c.category === catKey && c.semester === sem.id);
+                              const cellKey = `${catKey}_${sem.id}`;
+                              const isOver = dragOverCell === cellKey;
+
+                              return (
+                                <td 
+                                  key={sem.id}
+                                  onDragOver={(e) => handleDragOverCell(e, catKey, sem.id)}
+                                  onDrop={(e) => handleDropCell(e, catKey, sem.id)}
+                                  className={`p-2 border-r border-slate-200 align-top transition-colors duration-150 min-h-[110px] ${isOver ? 'drag-over-cell' : ''}`}
+                                >
+                                  <div className="flex flex-col gap-2 min-h-[90px]">
+                                    {cellCourses.length === 0 ? (
+                                      <div className="flex-1 border border-dashed border-slate-200 rounded-xl flex items-center justify-center p-2 text-slate-400 text-[11px] hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/30 transition">
+                                        + 拖放至此
+                                      </div>
+                                    ) : (
+                                      cellCourses.map(course => (
+                                        <TableCourseCard 
+                                          key={course.id} 
+                                          course={course}
+                                          onEdit={(c) => setEditCourse(c)}
+                                          onDragStart={handleDragStart}
+                                        />
+                                      ))
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            })}
+
+                            <td className="p-3 text-center border-l border-slate-200 font-mono font-bold text-indigo-700 bg-slate-50/50">
+                              {catCreditsSum} 學分
+                            </td>
+                          </tr>
+                        );
+                      })}
+
+                      <tr className="bg-slate-100/80 font-bold border-t-2 border-slate-300">
+                        <td className="p-3 text-center border-r border-slate-200 text-slate-800">
+                          學期小計
+                        </td>
+                        {SEMESTERS.map(sem => (
+                          <td key={sem.id} className="p-2.5 text-center border-r border-slate-200 font-mono text-emerald-700 font-semibold">
+                            {stats.semesterTotals[sem.id]} 學分
+                          </td>
+                        ))}
+                        <td className="p-3 text-center border-l border-slate-200 font-mono text-indigo-700 text-sm font-bold">
+                          {stats.counts.total} 學分
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'planner' && viewMode === 'kanban' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-8">
+                {SEMESTERS.map(sem => {
+                  const semCourses = courses.filter(c => c.semester === sem.id);
+                  const semCredits = stats.semesterTotals[sem.id] || 0;
+
+                  return (
+                    <div 
+                      key={sem.id}
+                      onDragOver={(e) => { e.preventDefault(); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const courseId = e.dataTransfer.getData('text/plain') || draggedCourseId;
+                        if (courseId) {
+                          const cObj = courses.find(c => c.id === courseId);
+                          if (cObj) handleMoveCourseMatrix(courseId, cObj.category, sem.id);
+                        }
+                      }}
+                      className="rounded-2xl border border-slate-200 bg-white flex flex-col shadow-sm"
+                    >
+                      <div className="p-3 rounded-t-2xl border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                        <h3 className="font-bold text-sm text-slate-800">{sem.label}</h3>
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-mono bg-white border border-slate-200 text-slate-700 font-medium shadow-2xs">
+                          {semCredits} 學分
+                        </span>
+                      </div>
+
+                      <div className="p-3 space-y-2 flex-1 min-h-[140px]">
+                        {semCourses.map(course => (
+                          <TableCourseCard 
+                            key={course.id} 
+                            course={course} 
+                            onEdit={(c) => setEditCourse(c)}
+                            onDragStart={handleDragStart}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {activeTab === 'rules' && (
+              <GraduationRulesView />
+            )}
+          </main>
+
+          {editCourse && (
+            <CourseEditModal 
+              course={editCourse} 
+              onSave={handleSaveCourse} 
+              onDelete={handleDeleteCourse} 
+              onClose={() => setEditCourse(null)} 
+            />
+          )}
+
+          {showHistoryModal && (
+            <HistoryModal 
+              history={history} 
+              onClose={() => setShowHistoryModal(false)} 
+            />
+          )}
+
+          <footer className="bg-white border-t border-slate-200 py-3 text-center text-xs text-slate-500">
+            實踐大學 商學與資訊學院 數位多媒體遊戲設計學系 116學年度課程計畫表共編平台
+          </footer>
+        </div>
+      );
+    }
+
+    function TableCourseCard({ course, onEdit, onDragStart }) {
+      const style = CATEGORY_COLORS[course.category] || CATEGORY_COLORS['自由選修'];
+
+      return (
+        <div 
+          draggable
+          onDragStart={(e) => onDragStart(e, course.id)}
+          className={`p-2.5 rounded-xl border ${style.bg} ${style.hover} transition-all duration-150 shadow-sm cursor-grab active:cursor-grabbing group relative`}
+        >
+          <div className="flex items-start justify-between gap-1 mb-1">
+            <span className="text-[10px] font-mono text-slate-500 font-medium truncate">
+              {course.code}
+            </span>
+            <button 
+              onClick={() => onEdit(course)}
+              className="text-slate-400 hover:text-indigo-600 p-0.5 rounded transition opacity-50 group-hover:opacity-100"
+            >
+              <i className="fa-solid fa-pen-to-square text-[11px]"></i>
+            </button>
+          </div>
+
+          <h4 className="font-bold text-xs text-slate-900 leading-tight mb-1.5">
+            {course.name}
+          </h4>
+
+          <div className="flex items-center justify-between text-[11px] font-mono text-slate-600 border-t border-slate-200/60 pt-1">
+            <span className="font-semibold text-slate-700">[{course.credits}學分]</span>
+            <span className="text-[10px] opacity-80">{course.category}</span>
+          </div>
+        </div>
+      );
+    }
+
+    function CourseEditModal({ course, onSave, onDelete, onClose }) {
+      const [formData, setFormData] = useState({ ...course });
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!formData.name.trim()) return;
+        onSave({ ...formData, credits: Number(formData.credits) || 0 });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 text-slate-800">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-lg text-slate-900">
+                {course.name ? `編輯：${course.name}` : '新增自訂課程'}
+              </h3>
+              <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+                <i className="fa-solid fa-xmark text-lg"></i>
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">課程名稱</label>
+                <input 
+                  type="text" 
+                  required
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+                  placeholder="例如：3D遊戲動畫設計"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">學分數</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    max="10"
+                    required
+                    value={formData.credits}
+                    onChange={(e) => setFormData({ ...formData, credits: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">學科代碼</label>
+                  <input 
+                    type="text" 
+                    value={formData.code}
+                    onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+                    placeholder="CSD101"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">課程選別</label>
+                  <select 
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+                  >
+                    <option value="校必">校訂必修</option>
+                    <option value="院必">院訂必修</option>
+                    <option value="系必">系訂必修</option>
+                    <option value="系選">系專業選修</option>
+                    <option value="自由選修">自由選修</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">擺放學期</label>
+                  <select 
+                    value={formData.semester}
+                    onChange={(e) => setFormData({ ...formData, semester: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+                  >
+                    {SEMESTERS.map(s => (
+                      <option key={s.id} value={s.id}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-4 border-t border-slate-100">
+                {course.name ? (
+                  <button 
+                    type="button"
+                    onClick={() => onDelete(course.id)}
+                    className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-2 rounded-xl transition font-medium"
+                  >
+                    <i className="fa-solid fa-trash mr-1"></i> 刪除
+                  </button>
+                ) : <div></div>}
+
+                <div className="flex space-x-2">
+                  <button 
+                    type="button"
+                    onClick={onClose}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl transition font-medium"
+                  >
+                    取消
+                  </button>
+                  <button 
+                    type="submit"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-xl transition shadow-md shadow-indigo-200"
+                  >
+                    儲存變更
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function HistoryModal({ history, onClose }) {
+      return (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 max-h-[80vh] flex flex-col text-slate-800">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                <i className="fa-solid fa-clock-rotate-left text-indigo-600"></i>
+                共編修改歷程紀錄
+              </h3>
+              <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+                <i className="fa-solid fa-xmark text-lg"></i>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 text-xs">
+              {history.length === 0 ? (
+                <p className="text-center text-slate-400 py-8">尚無任何修改紀錄</p>
+              ) : (
+                history.map((log, index) => (
+                  <div key={index} className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-start justify-between">
+                    <div>
+                      <span className="font-bold text-indigo-700 mr-2">{log.user}</span>
+                      <span className="text-slate-700">{log.action}</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400 shrink-0 ml-2">{log.timestamp}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function GraduationRulesView() {
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6 max-w-4xl mx-auto shadow-sm">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2 flex items-center gap-2">
+              <i className="fa-solid fa-scroll text-indigo-600"></i>
+              116學年度 數遊系日間學士班 畢業條件規範說明
+            </h2>
+            <p className="text-xs text-slate-500">摘錄自實踐大學商學與資訊學院數位多媒體遊戲設計學系 116學年度新生適用課程計畫表</p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4 text-xs">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+              <h3 className="font-bold text-sm text-indigo-900 border-b border-slate-200 pb-1.5">🎓 學分數規範</h3>
+              <ul className="space-y-1.5 text-slate-700 list-disc list-inside">
+                <li><strong className="text-slate-900">畢業總學分最低：</strong>128 學分</li>
+                <li><strong className="text-slate-900">校訂必修：</strong>18 學分</li>
+                <li><strong className="text-slate-900">院訂必修：</strong>8 學分</li>
+                <li><strong className="text-slate-900">系訂必修：</strong>51 學分</li>
+                <li><strong className="text-slate-900">選修學分：</strong>41 學分</li>
+              </ul>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+              <h3 className="font-bold text-sm text-purple-900 border-b border-slate-200 pb-1.5">🎮 專業學程認證 (三選一)</h3>
+              <p className="text-slate-600">須至少完成下列一項學程選修滿 12 學分方可畢業：</p>
+              <div className="flex flex-col gap-1.5 pt-1 font-semibold">
+                <div className="bg-purple-50 text-purple-800 border border-purple-200 px-3 py-1.5 rounded-xl">1. 互動遊戲設計學程</div>
+                <div className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded-xl">2. 數位多媒體設計學程</div>
+                <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl">3. 遊戲美術設計學程</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
