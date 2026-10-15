@@ -66,7 +66,7 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
-    // 請替換為您的 Supabase 專案 URL 與 Key
+    // Supabase 專案 URL 與 Key 設定
     const SUPABASE_CONFIG = {
       url: "https://pgemxhzleiprdypmcush.supabase.co",
       anonKey: "sb_publishable_el0lVAqzB18OGEXhk1SQVA_5YQPnl12"
@@ -85,7 +85,7 @@
     const GRADUATION_REQUIREMENTS = {
       total: 128,
       校必: 18,
-      院必: 8,
+      院必: 6,
       系必: 51,
       選修: 41
     };
@@ -198,7 +198,7 @@
       }, [courses]);
 
       useEffect(() => {
-        if (!window.supabase || SUPABASE_CONFIG.url === "YOUR_SUPABASE_URL") return;
+        if (!window.supabase || !SUPABASE_CONFIG.url || SUPABASE_CONFIG.url === "YOUR_SUPABASE_URL") return;
 
         try {
           const client = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
@@ -263,24 +263,39 @@
         }
       };
 
+      // 計算總計與個別學期的詳細分類小計
       const stats = useMemo(() => {
-        const counts = { 校必: 0, 院必: 0, 系必: 0, 系選: 0, 自由選修: 0, totalElectives: 0, total: 0 };
-        const semesterTotals = {};
-        SEMESTERS.forEach(s => { semesterTotals[s.id] = 0; });
+        const counts = { 校必: 0, 院必: 0, 系必: 0, 系選: 0, 自由選修: 0, totalElectives: 0, totalRequired: 0, total: 0 };
+        const semesterDetails = {};
+
+        SEMESTERS.forEach(s => { 
+          semesterDetails[s.id] = { 校必: 0, 院必: 0, 系必: 0, 系選: 0, 自由選修: 0, 必修合計: 0, 選修合計: 0, total: 0 }; 
+        });
 
         courses.forEach(c => {
           const cr = Number(c.credits) || 0;
           if (counts[c.category] !== undefined) {
             counts[c.category] += cr;
           }
-          if (c.semester && semesterTotals[c.semester] !== undefined) {
-            semesterTotals[c.semester] += cr;
+
+          if (c.semester && semesterDetails[c.semester]) {
+            semesterDetails[c.semester][c.category] = (semesterDetails[c.semester][c.category] || 0) + cr;
+            
+            // 計算必修 vs 選修
+            if (['校必', '院必', '系必'].includes(c.category)) {
+              semesterDetails[c.semester].必修合計 += cr;
+            } else {
+              semesterDetails[c.semester].選修合計 += cr;
+            }
+            semesterDetails[c.semester].total += cr;
           }
+
           counts.total += cr;
         });
 
         counts.totalElectives = counts.系選 + counts.自由選修;
-        return { counts, semesterTotals };
+        counts.totalRequired = counts.校必 + counts.院必 + counts.系必;
+        return { counts, semesterDetails };
       }, [courses]);
 
       const addHistoryLog = (actionText, updatedCourses) => {
@@ -451,6 +466,7 @@
             </div>
           </header>
 
+          {/* 總畢業學分進度統計 Bar */}
           <div className="bg-white/80 border-b border-slate-200/80 px-4 py-3 shadow-sm">
             <div className="max-w-7xl mx-auto">
               <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
@@ -518,7 +534,7 @@
                 <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between text-xs text-slate-700">
                   <div className="flex items-center space-x-2">
                     <i className="fa-solid fa-circle-info text-indigo-600 text-sm"></i>
-                    <span><strong>原計畫表模式：</strong>每一格代表「選別 × 學期」。按住課程即可跨類別、跨學期自由拖拽移動！</span>
+                    <span><strong>原計畫表模式：</strong>各分類（校必、院必、系必、系選、自由選修）的正下方皆附有該分類各學期的學分垂直小計與階段合計！</span>
                   </div>
                 </div>
 
@@ -526,7 +542,7 @@
                   <table className="w-full text-xs text-slate-800 border-collapse curriculum-table min-w-[1100px]">
                     <thead>
                       <tr className="bg-slate-100/90 text-slate-800 border-b border-slate-200">
-                        <th rowSpan="2" className="p-3 border-r border-slate-200 w-28 text-center font-bold bg-slate-100">
+                        <th rowSpan="2" className="p-3 border-r border-slate-200 w-32 text-center font-bold bg-slate-100">
                           課程選別 / 學期
                         </th>
                         {ACADEMIC_YEARS.map(ay => (
@@ -535,7 +551,7 @@
                           </th>
                         ))}
                         <th rowSpan="2" className="p-3 border-l border-slate-200 w-24 text-center font-bold bg-slate-100">
-                          選別小計
+                          選別總計
                         </th>
                       </tr>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
@@ -552,61 +568,117 @@
                         const catCourses = courses.filter(c => c.category === catKey);
                         const catCreditsSum = catCourses.reduce((acc, curr) => acc + (Number(curr.credits) || 0), 0);
 
+                        const isLastRequired = catKey === '系必';
+                        const isLastElective = catKey === '自由選修';
+
                         return (
-                          <tr key={catKey} className="border-b border-slate-200">
-                            <td className={`p-3 font-bold text-center border-r border-slate-200 bg-slate-50 ${style.badge}`}>
-                              {catKey}
-                            </td>
+                          <React.Fragment key={catKey}>
+                            {/* 分類課程列 */}
+                            <tr className="border-b border-slate-200">
+                              <td className={`p-3 font-bold text-center border-r border-slate-200 bg-slate-50 ${style.badge}`}>
+                                {catKey}
+                              </td>
 
-                            {SEMESTERS.map(sem => {
-                              const cellCourses = courses.filter(c => c.category === catKey && c.semester === sem.id);
-                              const cellKey = `${catKey}_${sem.id}`;
-                              const isOver = dragOverCell === cellKey;
+                              {SEMESTERS.map(sem => {
+                                const cellCourses = courses.filter(c => c.category === catKey && c.semester === sem.id);
+                                const cellKey = `${catKey}_${sem.id}`;
+                                const isOver = dragOverCell === cellKey;
 
-                              return (
-                                <td 
-                                  key={sem.id}
-                                  onDragOver={(e) => handleDragOverCell(e, catKey, sem.id)}
-                                  onDrop={(e) => handleDropCell(e, catKey, sem.id)}
-                                  className={`p-2 border-r border-slate-200 align-top transition-colors duration-150 min-h-[110px] ${isOver ? 'drag-over-cell' : ''}`}
-                                >
-                                  <div className="flex flex-col gap-2 min-h-[90px]">
-                                    {cellCourses.length === 0 ? (
-                                      <div className="flex-1 border border-dashed border-slate-200 rounded-xl flex items-center justify-center p-2 text-slate-400 text-[11px] hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/30 transition">
-                                        + 拖放至此
-                                      </div>
-                                    ) : (
-                                      cellCourses.map(course => (
-                                        <TableCourseCard 
-                                          key={course.id} 
-                                          course={course}
-                                          onEdit={(c) => setEditCourse(c)}
-                                          onDragStart={handleDragStart}
-                                        />
-                                      ))
-                                    )}
-                                  </div>
+                                return (
+                                  <td 
+                                    key={sem.id}
+                                    onDragOver={(e) => handleDragOverCell(e, catKey, sem.id)}
+                                    onDrop={(e) => handleDropCell(e, catKey, sem.id)}
+                                    className={`p-2 border-r border-slate-200 align-top transition-colors duration-150 min-h-[110px] ${isOver ? 'drag-over-cell' : ''}`}
+                                  >
+                                    <div className="flex flex-col gap-2 min-h-[90px]">
+                                      {cellCourses.length === 0 ? (
+                                        <div className="flex-1 border border-dashed border-slate-200 rounded-xl flex items-center justify-center p-2 text-slate-400 text-[11px] hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/30 transition">
+                                          + 拖放至此
+                                        </div>
+                                      ) : (
+                                        cellCourses.map(course => (
+                                          <TableCourseCard 
+                                            key={course.id} 
+                                            course={course}
+                                            onEdit={(c) => setEditCourse(c)}
+                                            onDragStart={handleDragStart}
+                                          />
+                                        ))
+                                      )}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+
+                              <td className="p-3 text-center border-l border-slate-200 font-mono font-bold text-indigo-700 bg-slate-50/50">
+                                {catCreditsSum} 學分
+                              </td>
+                            </tr>
+
+                            {/* 📍 該分類獨立的「垂直小計」列：直接緊貼在該分類列下方 */}
+                            <tr className="bg-slate-50/90 text-[11px] font-medium border-b border-slate-200">
+                              <td className="p-1.5 text-center border-r border-slate-200 font-bold text-slate-600 bg-slate-100/80">
+                                └ {catKey}小計
+                              </td>
+                              {SEMESTERS.map(sem => (
+                                <td key={sem.id} className="p-1.5 text-center border-r border-slate-200 font-mono text-slate-700 font-semibold">
+                                  {stats.semesterDetails[sem.id]?.[catKey] || 0} 學分
                                 </td>
-                              );
-                            })}
+                              ))}
+                              <td className="p-1.5 text-center border-l border-slate-200 font-mono font-bold text-slate-700">
+                                {stats.counts[catKey] || 0} 學分
+                              </td>
+                            </tr>
 
-                            <td className="p-3 text-center border-l border-slate-200 font-mono font-bold text-indigo-700 bg-slate-50/50">
-                              {catCreditsSum} 學分
-                            </td>
-                          </tr>
+                            {/* 📍 若為必修分類最後一列（系必下方），顯示【必修合計 (校+院+系)】 */}
+                            {isLastRequired && (
+                              <tr className="bg-emerald-100/80 font-bold border-b-2 border-slate-300 text-[11px] text-emerald-950">
+                                <td className="p-2 text-center border-r border-slate-300 bg-emerald-200/90 font-bold">
+                                  <i className="fa-solid fa-lock mr-1"></i>必修合計 (校+院+系)
+                                </td>
+                                {SEMESTERS.map(sem => (
+                                  <td key={sem.id} className="p-2 text-center border-r border-slate-300 font-mono text-emerald-900 font-bold">
+                                    {stats.semesterDetails[sem.id]?.必修合計 || 0} 學分
+                                  </td>
+                                ))}
+                                <td className="p-2 text-center border-l border-slate-300 font-mono text-emerald-900 font-extrabold bg-emerald-200/60">
+                                  {stats.counts.totalRequired} 學分
+                                </td>
+                              </tr>
+                            )}
+
+                            {/* 📍 若為選修分類最後一列（自由選修下方），顯示【選修合計 (系選+自由)】 */}
+                            {isLastElective && (
+                              <tr className="bg-amber-100/80 font-bold border-b-2 border-slate-300 text-[11px] text-amber-950">
+                                <td className="p-2 text-center border-r border-slate-300 bg-amber-200/90 font-bold">
+                                  <i className="fa-solid fa-hand-pointer mr-1"></i>選修合計 (系選+自由)
+                                </td>
+                                {SEMESTERS.map(sem => (
+                                  <td key={sem.id} className="p-2 text-center border-r border-slate-300 font-mono text-amber-900 font-bold">
+                                    {stats.semesterDetails[sem.id]?.選修合計 || 0} 學分
+                                  </td>
+                                ))}
+                                <td className="p-2 text-center border-l border-slate-300 font-mono text-amber-900 font-extrabold bg-amber-200/60">
+                                  {stats.counts.totalElectives} 學分
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })}
 
-                      <tr className="bg-slate-100/80 font-bold border-t-2 border-slate-300">
-                        <td className="p-3 text-center border-r border-slate-200 text-slate-800">
-                          學期小計
+                      {/* --- 最下方：各學期總學分加總列 --- */}
+                      <tr className="bg-slate-800 text-white font-bold border-t-2 border-slate-400">
+                        <td className="p-3 text-center border-r border-slate-700 bg-slate-900">
+                          <i className="fa-solid fa-calculator mr-1"></i>學期總計
                         </td>
                         {SEMESTERS.map(sem => (
-                          <td key={sem.id} className="p-2.5 text-center border-r border-slate-200 font-mono text-emerald-700 font-semibold">
-                            {stats.semesterTotals[sem.id]} 學分
+                          <td key={sem.id} className="p-2.5 text-center border-r border-slate-700 font-mono text-indigo-200 text-xs font-bold">
+                            {stats.semesterDetails[sem.id]?.total || 0} 學分
                           </td>
                         ))}
-                        <td className="p-3 text-center border-l border-slate-200 font-mono text-indigo-700 text-sm font-bold">
+                        <td className="p-3 text-center border-l border-slate-700 font-mono text-amber-300 text-sm font-bold bg-slate-900">
                           {stats.counts.total} 學分
                         </td>
                       </tr>
@@ -620,7 +692,7 @@
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-8">
                 {SEMESTERS.map(sem => {
                   const semCourses = courses.filter(c => c.semester === sem.id);
-                  const semCredits = stats.semesterTotals[sem.id] || 0;
+                  const semStat = stats.semesterDetails[sem.id] || { 院必: 0, 必修合計: 0, 選修合計: 0, total: 0 };
 
                   return (
                     <div 
@@ -636,11 +708,26 @@
                       }}
                       className="rounded-2xl border border-slate-200 bg-white flex flex-col shadow-sm"
                     >
-                      <div className="p-3 rounded-t-2xl border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-                        <h3 className="font-bold text-sm text-slate-800">{sem.label}</h3>
-                        <span className="text-xs px-2.5 py-0.5 rounded-full font-mono bg-white border border-slate-200 text-slate-700 font-medium shadow-2xs">
-                          {semCredits} 學分
-                        </span>
+                      <div className="p-3 rounded-t-2xl border-b border-slate-200 bg-slate-50 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-bold text-sm text-slate-800">{sem.label}</h3>
+                          <span className="text-xs px-2.5 py-0.5 rounded-full font-mono bg-indigo-600 text-white font-bold shadow-2xs">
+                            總計 {semStat.total} 學分
+                          </span>
+                        </div>
+
+                        {/* 看板模式頂部：個別學期詳細小計卡片 */}
+                        <div className="grid grid-cols-3 gap-1 text-[10px] text-center pt-1 border-t border-slate-200/60">
+                          <div className="bg-purple-50 text-purple-900 border border-purple-200 py-0.5 px-1 rounded-md font-medium">
+                            院必: <span className="font-mono font-bold">{semStat.院必}</span>
+                          </div>
+                          <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 py-0.5 px-1 rounded-md font-medium">
+                            必修: <span className="font-mono font-bold">{semStat.必修合計}</span>
+                          </div>
+                          <div className="bg-amber-50 text-amber-900 border border-amber-200 py-0.5 px-1 rounded-md font-medium">
+                            選修: <span className="font-mono font-bold">{semStat.選修合計}</span>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="p-3 space-y-2 flex-1 min-h-[140px]">
@@ -894,7 +981,7 @@
               <ul className="space-y-1.5 text-slate-700 list-disc list-inside">
                 <li><strong className="text-slate-900">畢業總學分最低：</strong>128 學分</li>
                 <li><strong className="text-slate-900">校訂必修：</strong>18 學分</li>
-                <li><strong className="text-slate-900">院訂必修：</strong>8 學分</li>
+                <li><strong className="text-slate-900">院訂必修：</strong>6 學分</li>
                 <li><strong className="text-slate-900">系訂必修：</strong>51 學分</li>
                 <li><strong className="text-slate-900">選修學分：</strong>41 學分</li>
               </ul>
